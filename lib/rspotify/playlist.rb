@@ -1,5 +1,4 @@
 module RSpotify
-
   # @attr [Boolean]     collaborative   true if the owner allows other users to modify the playlist
   # @attr [String]      description     The playlist description
   # @attr [Hash]        followers       Information about the followers of the playlist
@@ -13,7 +12,6 @@ module RSpotify
   # @attr [Hash]        tracks_added_by A hash containing the user that added each track to the playlist. Note: the hash is updated only when {#tracks} is used.
   # @attr [Hash]        tracks_is_local A hash showing whether each track is local or not. Note: the hash is updated only when {#tracks} is used.
   class Playlist < Base
-
     # Get a list of Spotify featured playlists (shown, for example, on a Spotify player’s “Browse” tab).
     #
     # @param limit    [Integer] Maximum number of playlists to return. Maximum: 50. Default: 20.
@@ -35,6 +33,7 @@ module RSpotify
 
       response = RSpotify.get(url)
       return response if RSpotify.raw_response
+
       response['playlists']['items'].map { |i| Playlist.new i }
     end
 
@@ -56,6 +55,7 @@ module RSpotify
 
       response = RSpotify.resolve_auth_request(user_id, url)
       return response if RSpotify.raw_response
+
       Playlist.new response
     end
 
@@ -74,6 +74,7 @@ module RSpotify
       url << "?market=#{market}" if market
       response = RSpotify.resolve_auth_request(nil, url)
       return response if RSpotify.raw_response
+
       Playlist.new response
     end
 
@@ -103,16 +104,12 @@ module RSpotify
       @snapshot_id   = options['snapshot_id']
       @total         = options['tracks']['total']
 
-      @owner = if options['owner']
-        User.new options['owner']
-      end
+      @owner = (User.new options['owner'] if options['owner'])
 
       tracks = options['tracks']['items'] if options['tracks']
-      tracks.select! { |t| t['track'] } if tracks
+      tracks&.select! { |t| t['track'] }
 
-      @tracks_cache = if tracks
-        tracks.map { |t| Track.new t['track'] }
-      end
+      @tracks_cache = tracks&.map { |t| Track.new t['track'] }
 
       @tracks_added_at = hash_for(tracks, 'added_at') do |added_at|
         Time.parse added_at
@@ -128,8 +125,8 @@ module RSpotify
 
       super(options)
 
-      @path = "users/#{@owner.instance_variable_get('@id').gsub('?','')}/"
-      @path << (@href =~ /\/starred$/ ? 'starred' : "playlists/#{@id}")
+      @path = "users/#{@owner.instance_variable_get('@id').gsub('?', '')}/"
+      @path << (@href =~ %r{/starred$} ? 'starred' : "playlists/#{@id}")
     end
 
     # Adds one or more tracks to a playlist in user's Spotify account. This method is only available when the
@@ -151,11 +148,11 @@ module RSpotify
     #           playlist.tracks[20].name #=> "Somebody That I Used To Know"
     def add_tracks!(tracks, position: nil)
       track_uris = nil
-      if tracks.first.is_a? String
-        track_uris = tracks.join(',')
-      else
-        track_uris = tracks.map(&:uri).join(',')
-      end
+      track_uris = if tracks.first.is_a? String
+                     tracks.join(',')
+                   else
+                     tracks.map(&:uri).join(',')
+                   end
       url = "#{@path}/tracks?uris=#{track_uris}"
       url << "&position=#{position}" if position
 
@@ -163,7 +160,7 @@ module RSpotify
       @total += tracks.size
       @tracks_cache = nil
 
-      if RSpotify::raw_response
+      if RSpotify.raw_response
         @snapshot_id = JSON.parse(response)['snapshot_id']
         return response
       end
@@ -228,14 +225,16 @@ module RSpotify
       url = "#{@path}/followers/contains?ids=#{user_ids}"
 
       users_credentials = if User.class_variable_defined?('@@users_credentials')
-        User.class_variable_get('@@users_credentials')
+                            User.class_variable_get('@@users_credentials')
       end
 
-      auth_users = users.select do |user|
-        users_credentials[user.id]
-      end if users_credentials
+      if users_credentials
+        auth_users = users.select do |user|
+          users_credentials[user.id]
+        end
+      end
 
-      if auth_users && auth_users.any?
+      if auth_users&.any?
         User.oauth_get(auth_users.first.id, url)
       else
         RSpotify.get(url)
@@ -280,6 +279,7 @@ module RSpotify
       tracks.map! { |t| Track.new t['track'] }
       @tracks_cache = tracks if limit == 100 && offset == 0
       return response if RSpotify.raw_response
+
       tracks
     end
 
@@ -305,17 +305,20 @@ module RSpotify
     def remove_tracks!(tracks, snapshot_id: nil)
       positions = tracks if tracks.first.is_a? Fixnum
 
-      tracks = tracks.map do |track|
-        next { uri: track.uri } if track.is_a? Track
-        {
-          uri: track[:track].uri,
-          positions: track[:positions]
-        }
-      end unless positions
+      unless positions
+        tracks = tracks.map do |track|
+          next { uri: track.uri } if track.is_a? Track
+
+          {
+            uri: track[:track].uri,
+            positions: track[:positions]
+          }
+        end
+      end
 
       params = {
         method: :delete,
-        url: URI::encode(RSpotify::API_URI + @path + '/tracks'),
+        url: URI.encode(RSpotify::API_URI + @path + '/tracks'),
         headers: User.send(:oauth_header, @owner.id),
         payload: positions ? { positions: positions } : { tracks: tracks }
       }
@@ -368,11 +371,11 @@ module RSpotify
     # @example
     #           playlist.replace_image!('SkZJRgABA...', 'image/jpeg')
     def replace_image!(image, content_type)
-      url = "#{@path}/images"
+      url = "playlists/#{@id}/images"
       headers = {
         'Content-Type' => content_type
       }
-      User.oauth_put(@owner.id, url, image, { headers: headers })
+      User.oauth_put(@owner.id, url, image, headers: headers)
       nil
     end
 
@@ -397,6 +400,5 @@ module RSpotify
       @snapshot_id = nil
       tracks
     end
-
   end
 end
